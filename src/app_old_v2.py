@@ -30,7 +30,13 @@ def dijkstra(nodes, edges, start, end):
     distances[start] = 0
     steps = []
 
-    for _ in range(len(nodes)):
+    # adjacency list
+    adj = {n: [] for n in nodes}
+    for (s, t, w) in edges:
+        adj[s].append((t, w))
+        adj[t].append((s, w))
+
+    for i in range(len(nodes)):
         u = None
         for node in nodes:
             if not visited[node] and (u is None or distances[node] < distances[u]):
@@ -40,19 +46,32 @@ def dijkstra(nodes, edges, start, end):
             break
 
         visited[u] = True
-        steps.append({
+
+        step_detail = {
             'current': u,
             'distances': copy.deepcopy(distances),
-            'visited': copy.deepcopy(visited)
-        })
+            'visited': copy.deepcopy(visited),
+            'checks': []
+        }
 
-        for (s, t, w) in edges:
-            if s == u or t == u:
-                v = t if s == u else s
-                alt = distances[u] + w
-                if alt < distances[v]:
-                    distances[v] = alt
-                    previous[v] = u
+        for (v, w) in adj[u]:
+            old_dist = distances[v]
+            alt = distances[u] + w
+            updated = False
+            if alt < distances[v]:
+                distances[v] = alt
+                previous[v] = u
+                updated = True
+            step_detail['checks'].append({
+                'from': u,
+                'to': v,
+                'old_dist': old_dist,
+                'new_dist': distances[v],
+                'weight': w,
+                'updated': updated
+            })
+
+        steps.append(step_detail)
 
     path = []
     curr = end
@@ -62,6 +81,7 @@ def dijkstra(nodes, edges, start, end):
     if curr == start:
         path.append(start)
     path.reverse()
+
     return steps, path
 
 def node_position(n):
@@ -76,7 +96,7 @@ def node_position(n):
         x, y = positions[n]
     else:
         import random
-        x, y = random.randint(50,350), random.randint(50,350)
+        x, y = random.randint(50, 350), random.randint(50, 350)
     return {'x': x, 'y': y}
 
 def generate_elements(nodes, edges, source, target, step_info=None, path=[]):
@@ -113,12 +133,12 @@ def generate_elements(nodes, edges, source, target, step_info=None, path=[]):
     edges_in_path = set()
     for i in range(len(path)-1):
         s, t = path[i], path[i+1]
-        edges_in_path.add((s,t))
-        edges_in_path.add((t,s))
+        edges_in_path.add((s, t))
+        edges_in_path.add((t, s))
 
     for (s, t, w) in edges:
         style = {}
-        if (s,t) in edges_in_path or (t,s) in edges_in_path:
+        if (s, t) in edges_in_path or (t, s) in edges_in_path:
             style['line-color'] = '#ef4444'
             style['width'] = 5
             style['target-arrow-color'] = '#ef4444'
@@ -134,6 +154,40 @@ def generate_elements(nodes, edges, source, target, step_info=None, path=[]):
         })
     return elems
 
+def format_step_info(step_index, steps, path):
+    if step_index < 0:
+        return "Algoritmayı başlatın."
+    step = steps[step_index]
+    info_lines = []
+    info_lines.append(f"Adım {step_index+1}/{len(steps)}:")
+    info_lines.append(f"İşlenen düğüm: {step['current']}")
+    if step['checks']:
+        info_lines.append("Kontrol edilen kenarlar ve mesafe güncellemeleri:")
+        for ch in step['checks']:
+            line = f"- {ch['from']} -> {ch['to']} (Ağırlık={ch['weight']}): eski mesafe={ch['old_dist']}, yeni mesafe={ch['new_dist']}"
+            if ch['updated']:
+                line += " [GÜNCELLENDİ]"
+            info_lines.append(line)
+    else:
+        info_lines.append("Bu adımda kontrol edilen kenar yok.")
+
+    # Son adımda yol bulunduysa göster
+    if step_index == len(steps)-1 and len(path) > 0:
+        info_lines.append("")
+        info_lines.append("Yol bulundu: " + " -> ".join(path))
+        total_cost = 0
+        for i in range(len(path)-1):
+            s = path[i]
+            t = path[i+1]
+            for (x, y, w) in initial_edges:
+                if (x == s and y == t) or (x == t and y == s):
+                    total_cost += w
+                    break
+        info_lines.append(f"Toplam Maliyet: {total_cost}")
+
+    return "\n".join(info_lines)
+
+# --- Stylesheet değişkeni burada tanımlanıyor ---
 stylesheet = [
     {
         'selector': 'node',
@@ -203,8 +257,8 @@ app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeigh
                         dcc.Dropdown(id='end-node-dropdown', placeholder='Hedef düğüm seçin', value=default_target),
 
                         html.H3("Açıklama", style={'marginTop':'20px'}),
-                        html.P("SEM (Yapısal Eşitlik Modellemesi), istatistiksel modellerin bir kombinasyonudur. Bu uygulamada graf üzerinde en kısa yol aramasını adım adım izleyebilirsiniz."),
-                        html.P("Sol panelden düğüm/kenar ekleyip çıkarın, başlangıç/hedef düğümleri seçin. Graf üzerindeki düğümlere tıklayarak da başlangıç/hedef belirleyebilirsiniz. 'Başlat', 'Adım ilerlet' ve 'Sıfırla' ile Dijkstra algoritmasını izleyin.")
+                        html.P("Bu uygulamada Dijkstra algoritmasını adım adım izleyebilirsiniz."),
+                        html.P("Sol panelden düğüm/kenar ekleyip çıkarın, başlangıç/hedef düğümleri seçin. Graf üzerinde düğümlere tıklayarak da başlangıç/hedef belirleyebilirsiniz. 'Başlat', 'Adım ilerlet' ve 'Sıfırla' ile algoritmayı yönetin.")
                     ]
                 ),
 
@@ -220,7 +274,7 @@ app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeigh
                             style={'width': '500px', 'height': '400px','border':'1px solid #ccc','borderRadius':'4px'},
                             stylesheet=stylesheet
                         ),
-                        html.Div(id='info', style={'marginTop':'10px','color':'#555','minHeight':'20px'}),
+                        html.Pre(id='info', style={'marginTop':'10px','color':'#555','minHeight':'200px','whiteSpace':'pre-wrap','background':'#f0f0f0','padding':'10px','borderRadius':'4px','border':'1px solid #ccc'}),
                         html.Div(style={'marginTop':'20px','display':'flex','gap':'10px','justifyContent':'center'}, children=[
                             html.Button("Başlat", id="start-button", n_clicks=0, style={'padding':'10px 20px','backgroundColor':'#2563eb','color':'white','borderRadius':'4px','border':'none','cursor':'pointer'}),
                             html.Button("Adım ilerlet", id="step-button", n_clicks=0, style={'padding':'10px 20px','backgroundColor':'#16a34a','color':'white','borderRadius':'4px','border':'none','cursor':'pointer'}),
@@ -248,8 +302,6 @@ app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeigh
     ]
 )
 
-
-# Bu callback `graph-data.data`'yı ilk açılışta da günceller. Burada allow_duplicate KULLANILMAZ.
 @app.callback(
     Output('graph-data', 'data'),
     Output('node-remove-dropdown', 'options'),
@@ -280,7 +332,6 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
     nodes = data['nodes']
     edges = data['edges']
 
-    # Düğüm/Kenar ekleme çıkarma işlemleri
     trigger = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
     if trigger == 'node-add-button' and add_node_val and add_node_val not in nodes:
@@ -288,7 +339,6 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
     elif trigger == 'node-remove-button' and remove_node_val and remove_node_val in nodes:
         nodes.remove(remove_node_val)
         edges = [e for e in edges if e[0]!=remove_node_val and e[1]!=remove_node_val]
-        # Silinen node source/target ise değiştir
         if data['source'] == remove_node_val and nodes:
             data['source'] = nodes[0]
         if data['target'] == remove_node_val and nodes:
@@ -306,7 +356,6 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
     data['nodes'] = nodes
     data['edges'] = edges
 
-    # Başlangıç ve hedef dropdown seçimleri
     if start_value in nodes:
         data['source'] = start_value
     if end_value in nodes:
@@ -317,9 +366,6 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
 
     return data, node_options, edge_options, node_options, node_options
 
-
-# Bu callback ise allow_duplicate=True kullanıyor, bu nedenle prevent_initial_call=True ayarlı.
-# İlk açılışta tetiklenmez, sadece kullanıcı etkileşimi ile tetiklenir.
 @app.callback(
     Output('cytoscape-graph', 'elements'),
     Output('info', 'children'),
@@ -336,7 +382,6 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
 def control_buttons(start_clicks, step_clicks, reset_clicks, tapNode, data, elems):
     data_out = data.copy()
     ctx = dash.callback_context
-
     button_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
     nodes = data['nodes']
@@ -361,15 +406,14 @@ def control_buttons(start_clicks, step_clicks, reset_clicks, tapNode, data, elem
     if button_id == 'start-button':
         if source not in nodes or target not in nodes:
             return dash.no_update, "Kaynak veya hedef düğüm geçersiz.", dash.no_update, data_out
-        steps, path = dijkstra(nodes, edges, source, target)
-        current_step = -1
-        is_running = True
-        data_out['steps'] = steps
-        data_out['path'] = path
-        data_out['current_step'] = current_step
-        data_out['is_running'] = is_running
+        new_steps, new_path = dijkstra(nodes, edges, source, target)
+        data_out['steps'] = new_steps
+        data_out['path'] = new_path
+        data_out['current_step'] = -1
+        data_out['is_running'] = True
         elems = generate_elements(nodes, edges, source, target)
-        return elems, "Algoritma başlatıldı. 'Adım ilerlet' ile devam edin.", f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
+        info_text = "Algoritma başlatıldı. 'Adım ilerlet' ile devam edin."
+        return elems, info_text, f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
 
     elif button_id == 'step-button':
         if not is_running:
@@ -380,13 +424,7 @@ def control_buttons(start_clicks, step_clicks, reset_clicks, tapNode, data, elem
             step = steps[current_step]
             final_step = (current_step == len(steps)-1)
             elems = generate_elements(nodes, edges, source, target, step_info=step, path= path if final_step else [])
-            info_text = f"Adım: {current_step+1}/{len(steps)} - İşlenen düğüm: {step['current']}"
-            if final_step and path:
-                info_text += " - Yol bulundu: " + "->".join(path)
-                is_running = False
-                data_out['is_running'] = False
-            else:
-                info_text += " - 'Adım ilerlet' ile devam."
+            info_text = format_step_info(current_step, steps, path)
             return elems, info_text, f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
         else:
             return dash.no_update, "Tüm adımlar tamamlandı.", dash.no_update, data_out

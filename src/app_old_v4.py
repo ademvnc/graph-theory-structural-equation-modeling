@@ -4,10 +4,10 @@ import dash_cytoscape as cyto
 import copy
 
 app = dash.Dash(__name__)
-app.title = "SEM & En Kısa Yol Görselleştirmesi"
+app.title = "SEM Tabanlı Yöntemle Yol Analizi"
 server = app.server
 
-# Başlangıç graf
+# Başlangıç graf (SEM benzeri, katsayılar "yapısal ilişkiler")
 initial_nodes = ['A', 'B', 'C', 'D', 'E']
 initial_edges = [
     ('A', 'B', 2),
@@ -16,21 +16,39 @@ initial_edges = [
     ('B', 'D', 7),
     ('C', 'D', 3),
     ('C', 'E', 5),
-    ('D', 'E', 18),
+    ('D', 'E', 1),
 ]
 
 default_source = 'A'
 default_target = 'E'
 
-def dijkstra(nodes, edges, start, end):
+def run_sem_model(nodes, edges, start, end):
+    # Burada SEM benzeri bir yaklaşım gösteriyoruz:
+    # Buradaki "mesafeler" aslında "uyumluluk skorları" olarak varsayılsın.
+    # Dijkstra benzeri mantık: düşük skor = yüksek uyum (ters mantık yapıyoruz).
+    # Gerçekte SEM böyle çalışmaz ama istenen konsepte yaklaşmak için benzetim yapıyoruz.
+    
+    # Burada da mesafeler yerine "maliyet" benzeri bir şey kullanıyoruz, 
+    # ancak bunu "uyumsuzluk" gibi düşünebiliriz.
+    
+    
     distances = {n: float('inf') for n in nodes}
     visited = {n: False for n in nodes}
     previous = {n: None for n in nodes}
 
+    # SEM'de her kenarı yapısal bir ilişki olarak göreceğiz. 
+    # Burada düşük ağırlık = yüksek uyum diye varsayıyoruz.
     distances[start] = 0
+
+    # adjacency list
+    adj = {n: [] for n in nodes}
+    for (s, t, w) in edges:
+        adj[s].append((t, w))
+        adj[t].append((s, w))
+
     steps = []
 
-    for _ in range(len(nodes)):
+    for i in range(len(nodes)):
         u = None
         for node in nodes:
             if not visited[node] and (u is None or distances[node] < distances[u]):
@@ -40,19 +58,45 @@ def dijkstra(nodes, edges, start, end):
             break
 
         visited[u] = True
-        steps.append({
+
+        step_detail = {
             'current': u,
             'distances': copy.deepcopy(distances),
-            'visited': copy.deepcopy(visited)
-        })
+            'visited': copy.deepcopy(visited),
+            'checks': []
+        }
 
-        for (s, t, w) in edges:
-            if s == u or t == u:
-                v = t if s == u else s
-                alt = distances[u] + w
-                if alt < distances[v]:
-                    distances[v] = alt
-                    previous[v] = u
+        # Her komşu yapısal ilişkiyi kontrol et
+        for (v, w) in adj[u]:
+            # if v == start:  # Başlangıç düğümüne geri dönüşü atla
+            #     continue
+            
+            old_dist = distances[v]
+            old_dist_display = "∞" if old_dist == float('inf') else old_dist  # Sonsuzluğu gösterim için dönüştür
+            alt = distances[u] + w
+            updated = False
+            if alt < distances[v]:
+                distances[v] = alt
+                previous[v] = u
+                updated = True
+
+            # Başlangıç düğümüne dönüşlerde eski ve yeni değerleri doğru şekilde göster
+            if v == start:
+                alt_display = alt  # Yeni uyumsuzluk alt değeri olur
+            else:
+                alt_display = distances[v]
+
+
+            step_detail['checks'].append({
+                'from': u,
+                'to': v,
+                'old_dist': old_dist_display,
+                'new_dist': alt_display,
+                'weight': w,
+                'updated': updated
+            })
+
+        steps.append(step_detail)
 
     path = []
     curr = end
@@ -62,6 +106,7 @@ def dijkstra(nodes, edges, start, end):
     if curr == start:
         path.append(start)
     path.reverse()
+
     return steps, path
 
 def node_position(n):
@@ -134,6 +179,40 @@ def generate_elements(nodes, edges, source, target, step_info=None, path=[]):
         })
     return elems
 
+def format_step_info(step_index, steps, path,edges):
+    if step_index < 0:
+        return "SEM tabanlı analizi başlatın."
+    step = steps[step_index]
+    info_lines = []
+    info_lines.append(f"Adım {step_index+1}/{len(steps)}:")
+    info_lines.append(f"İşlenen değişken (düğüm): {step['current']}")
+    if step['checks']:
+        info_lines.append("İncelenen yapısal ilişkiler ve güncellenen uyum skorları:")
+        for ch in step['checks']:
+            line = f"- {ch['from']} -> {ch['to']} (İlişki katsayısı={ch['weight']}): eski uyumsuzluk={ch['old_dist']}, yeni uyumsuzluk={ch['new_dist']}"
+            
+            if ch['updated']:
+                line += " [GÜNCELLENDİ]"
+            info_lines.append(line)
+    else:
+        info_lines.append("Bu adımda incelenecek yapısal ilişki yok.")
+
+    # Son adımda en uyumlu yol bulunduysa göster
+    if step_index == len(steps)-1 and len(path) > 0:
+        info_lines.append("")
+        info_lines.append("En uyumlu yapısal yol bulundu: " + " -> ".join(path))
+        total_cost = 0
+        for i in range(len(path)-1):
+            s = path[i]
+            t = path[i+1]
+            for (x, y, w) in edges:
+                if (x == s and y == t) or (x == t and y == s):
+                    total_cost += w
+                    break
+        info_lines.append(f"Toplam Yapısal Uyumsuzluk Skoru: {total_cost} (Daha düşük daha iyi)")
+
+    return "\n".join(info_lines)
+
 stylesheet = [
     {
         'selector': 'node',
@@ -154,25 +233,27 @@ stylesheet = [
         'style': {
             'width': 3,
             'line-color': '#ccc',
-            'target-arrow-color': '#ccc',
-            'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier',
+            'curve-style': 'bezier',          # Kıvrımlı stil
             'label': 'data(weight)',
             'font-size': '12px',
             'text-background-opacity': 1,
             'text-background-color': '#fff',
             'text-background-padding': '2px',
             'text-rotation': 'autorotate',
-            'color': '#333'
+            'color': '#333',
+            'target-arrow-shape': 'none',    # Okları kaldır
+            'source-arrow-shape': 'none'     # Çift yönlü düz çizgi
         }
     }
 ]
+
+
 
 app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeight':'100vh','background':'#f9fafb'},
     children=[
         html.Header(style={'background':'white','padding':'20px','boxShadow':'0 2px 4px rgba(0,0,0,0.1)'},
             children=[
-                html.H1("SEM & En Kısa Yol Görselleştirmesi",style={'textAlign':'center','margin':0})
+                html.H1("SEM Tabanlı Yapısal Yol Analizi",style={'textAlign':'center','margin':0})
             ]
         ),
         html.Div(style={'flex':'1','display':'flex','flexWrap':'wrap','padding':'20px','gap':'20px'},
@@ -188,26 +269,30 @@ app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeigh
                         dcc.Dropdown(id='node-remove-dropdown', placeholder='Silinecek düğüm', style={'width':'150px','display':'inline-block','marginTop':'5px'}),
                         html.Button("Sil", id="node-remove-button", style={'marginLeft':'10px','backgroundColor':'#dc2626','border':'none','color':'white','padding':'5px 10px','borderRadius':'4px'}),
 
-                        html.H3("Kenar Ekle / Sil", style={'marginTop':'20px'}),
+                        html.H3("Kenar (Yapısal İlişki) Ekle / Sil", style={'marginTop':'20px'}),
                         html.Div([
-                            dcc.Input(id='edge-add-input-source', placeholder='Kaynak düğüm', type='text', style={'marginRight':'5px','width':'100px'}),
-                            dcc.Input(id='edge-add-input-target', placeholder='Hedef düğüm', type='text', style={'marginRight':'5px','width':'100px'}),
-                            dcc.Input(id='edge-add-input-weight', placeholder='Ağırlık', type='number', style={'marginRight':'10px','width':'80px'}),
+                            dcc.Input(id='edge-add-input-source', placeholder='Kaynak değişken', type='text', style={'marginRight':'5px','width':'100px'}),
+                            dcc.Input(id='edge-add-input-target', placeholder='Hedef değişken', type='text', style={'marginRight':'5px','width':'100px'}),
+                            dcc.Input(id='edge-add-input-weight', placeholder='İlişki Ağırlığı', type='number', style={'marginRight':'10px','width':'80px'}),
                             html.Button("Ekle", id="edge-add-button", style={'marginTop':'5px','backgroundColor':'#4ade80','border':'none','color':'white','padding':'5px 10px','borderRadius':'4px'})
                         ], style={'marginBottom':'10px'}),
-                        dcc.Dropdown(id='edge-remove-dropdown', placeholder='Silinecek kenar', style={'width':'200px','display':'inline-block'}),
+                        dcc.Dropdown(id='edge-remove-dropdown', placeholder='Silinecek ilişki', style={'width':'200px','display':'inline-block'}),
                         html.Button("Sil", id="edge-remove-button", style={'marginLeft':'10px','backgroundColor':'#dc2626','border':'none','color':'white','padding':'5px 10px','borderRadius':'4px'}),
 
+                        html.H3("Başlangıç ve Hedef Değişken Seçimi", style={'marginTop':'20px'}),
+                        dcc.Dropdown(id='start-node-dropdown', placeholder='Başlangıç değişkeni seçin', value=default_source, style={'marginBottom':'10px'}),
+                        dcc.Dropdown(id='end-node-dropdown', placeholder='Hedef değişkeni seçin', value=default_target),
+
                         html.H3("Açıklama", style={'marginTop':'20px'}),
-                        html.P("SEM (Yapısal Eşitlik Modellemesi), istatistiksel modellerin bir kombinasyonudur. Bu uygulamada benzer bir mantıkla graf üzerinde en kısa yol aramasını adım adım izleyebilirsiniz."),
-                        html.P("Sol panelden düğüm/kenar ekleyip çıkarın, graf üzerinden başlangıç ve hedef düğümleri seçin. 'Başlat', 'Adım ilerlet' ve 'Sıfırla' ile Dijkstra algoritmasını izleyin.")
+                        html.P("Bu örnekte Yapısal Eşitlik Modellemesi (SEM) kavramından esinlenerek bir yol analizi yapılmaktadır."),
+                        html.P("Sol panelden değişken/ilişki ekleyip çıkarın, başlangıç/hedef değişkenleri seçin. Graf üzerine tıklayarak da başlangıç/hedef belirleyebilirsiniz. 'Başlat', 'Sonraki Adım', 'Önceki Adım' ve 'Sıfırla' butonlarıyla süreci takip edin."),
                     ]
                 ),
 
                 html.Div(
                     style={'flex':'2','minWidth':'400px','background':'white','padding':'20px','borderRadius':'8px','boxShadow':'0 2px 4px rgba(0,0,0,0.1)','display':'flex','flexDirection':'column','alignItems':'center'},
                     children=[
-                        html.H2("En Kısa Yol Görselleştirmesi", style={'marginBottom':'10px'}),
+                        html.H2("SEM Tabanlı Yol Görselleştirmesi", style={'marginBottom':'10px'}),
                         html.Div(id='current-nodes', style={'fontWeight':'bold','marginBottom':'10px'}),
                         cyto.Cytoscape(
                             id='cytoscape-graph',
@@ -216,10 +301,11 @@ app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeigh
                             style={'width': '500px', 'height': '400px','border':'1px solid #ccc','borderRadius':'4px'},
                             stylesheet=stylesheet
                         ),
-                        html.Div(id='info', style={'marginTop':'10px','color':'#555','minHeight':'20px'}),
+                        html.Pre(id='info', style={'marginTop':'10px','color':'#555','minHeight':'200px','whiteSpace':'pre-wrap','background':'#f0f0f0','padding':'10px','borderRadius':'4px','border':'1px solid #ccc'}),
                         html.Div(style={'marginTop':'20px','display':'flex','gap':'10px','justifyContent':'center'}, children=[
                             html.Button("Başlat", id="start-button", n_clicks=0, style={'padding':'10px 20px','backgroundColor':'#2563eb','color':'white','borderRadius':'4px','border':'none','cursor':'pointer'}),
-                            html.Button("Adım ilerlet", id="step-button", n_clicks=0, style={'padding':'10px 20px','backgroundColor':'#16a34a','color':'white','borderRadius':'4px','border':'none','cursor':'pointer'}),
+                            html.Button("Önceki Adım", id="prev-step-button", n_clicks=0, style={ 'padding': '10px 20px', 'backgroundColor': '#facc15', 'color': 'black', 'borderRadius': '4px', 'border': 'none', 'cursor': 'pointer' }),
+                            html.Button("Sonraki Adım", id="step-button", n_clicks=0, style={'padding':'10px 20px','backgroundColor':'#16a34a','color':'white','borderRadius':'4px','border':'none','cursor':'pointer'}),
                             html.Button("Sıfırla", id="reset-button", n_clicks=0, style={'padding':'10px 20px','backgroundColor':'#dc2626','color':'white','borderRadius':'4px','border':'none','cursor':'pointer'}),
                         ])
                     ]
@@ -231,42 +317,50 @@ app.layout = html.Div(style={'display':'flex','flexDirection':'column','minHeigh
             children="© 2024 Örnek Proje"
         ),
 
-        dcc.Store(id='graph-data', data={'nodes': initial_nodes, 'edges': initial_edges, 'source': default_source, 'target': default_target, 'steps':[], 'path':[], 'current_step':-1, 'is_running':False})
+        dcc.Store(id='graph-data', data={
+            'nodes': initial_nodes, 
+            'edges': initial_edges, 
+            'source': default_source, 
+            'target': default_target, 
+            'steps':[], 
+            'path':[], 
+            'current_step':-1, 
+            'is_running':False
+        })
     ]
 )
 
 @app.callback(
-    Output('graph-data', 'data', allow_duplicate=True),
+    Output('graph-data', 'data'),
     Output('node-remove-dropdown', 'options'),
     Output('edge-remove-dropdown', 'options'),
+    Output('start-node-dropdown', 'options'),
+    Output('end-node-dropdown', 'options'),
     Input('node-add-button', 'n_clicks'),
     Input('node-remove-button', 'n_clicks'),
     Input('edge-add-button', 'n_clicks'),
     Input('edge-remove-button', 'n_clicks'),
+    Input('start-node-dropdown', 'value'),
+    Input('end-node-dropdown', 'value'),
     State('node-add-input', 'value'),
     State('node-remove-dropdown', 'value'),
     State('edge-add-input-source', 'value'),
     State('edge-add-input-target', 'value'),
     State('edge-add-input-weight', 'value'),
     State('edge-remove-dropdown', 'value'),
-    State('graph-data', 'data'),
-    prevent_initial_call=True
+    State('graph-data', 'data')
 )
 def modify_graph(node_add, node_remove, edge_add, edge_remove,
+                 start_value, end_value,
                  add_node_val, remove_node_val,
                  add_edge_source, add_edge_target, add_edge_weight,
                  remove_edge_val,
                  data):
     ctx = dash.callback_context
-    if not ctx.triggered:
-        node_options = [{'label': n, 'value': n} for n in data['nodes']]
-        edge_options = [{'label': f"{s}-{t}(w={w})", 'value': f"{s}-{t}"} for (s,t,w) in data['edges']]
-        return data, node_options, edge_options
-
-    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
-
     nodes = data['nodes']
     edges = data['edges']
+
+    trigger = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
     if trigger == 'node-add-button' and add_node_val and add_node_val not in nodes:
         nodes.append(add_node_val)
@@ -290,10 +384,15 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
     data['nodes'] = nodes
     data['edges'] = edges
 
+    if start_value in nodes:
+        data['source'] = start_value
+    if end_value in nodes:
+        data['target'] = end_value
+
     node_options = [{'label': n, 'value': n} for n in nodes]
     edge_options = [{'label': f"{s}-{t}(w={w})", 'value': f"{s}-{t}"} for (s,t,w) in edges]
 
-    return data, node_options, edge_options
+    return data, node_options, edge_options, node_options, node_options
 
 @app.callback(
     Output('cytoscape-graph', 'elements'),
@@ -302,21 +401,17 @@ def modify_graph(node_add, node_remove, edge_add, edge_remove,
     Output('graph-data', 'data', allow_duplicate=True),
     Input('start-button', 'n_clicks'),
     Input('step-button', 'n_clicks'),
+    Input('prev-step-button', 'n_clicks'),  # Yeni düğme için giriş
     Input('reset-button', 'n_clicks'),
     Input('cytoscape-graph', 'tapNode'),
     State('graph-data', 'data'),
     State('cytoscape-graph', 'elements'),
     prevent_initial_call=True
 )
-def control_buttons(start_clicks, step_clicks, reset_clicks, tapNode, data, elems):
+def control_buttons(start_clicks, step_clicks, prev_clicks, reset_clicks, tapNode, data, elems):
     data_out = data.copy()
     ctx = dash.callback_context
-    if not ctx.triggered:
-        # Bu durum prevent_initial_call=True nedeniyle ilk açılışta tetiklenmez
-        # Eğer ilk açılışta bir şey göstermek isterseniz separate bir Callback ekleyebilirsiniz.
-        pass
-
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
     nodes = data['nodes']
     edges = data['edges']
@@ -327,46 +422,41 @@ def control_buttons(start_clicks, step_clicks, reset_clicks, tapNode, data, elem
     current_step = data['current_step']
     is_running = data['is_running']
 
-    if button_id == 'cytoscape-graph' and tapNode is not None and not is_running:
-        if tapNode['data']['id'] != target:
-            source = tapNode['data']['id']
+    if button_id == 'prev-step-button':
+        if current_step > 0:
+            current_step -= 1
+            data_out['current_step'] = current_step
+            step = steps[current_step]
+            elems = generate_elements(nodes, edges, source, target, step_info=step, path=[])
+            info_text = format_step_info(current_step, steps, path, edges)
+            return elems, info_text, f"Başlangıç değişkeni: {source}, Hedef değişkeni: {target}", data_out
         else:
-            target = tapNode['data']['id']
-        data_out['source'] = source
-        data_out['target'] = target
-        elems = generate_elements(nodes, edges, source, target)
-        return elems, "Başlangıç/Hedef düğümü güncellendi.", f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
+            return dash.no_update, "İlk adımdasınız, geri gidemezsiniz.", dash.no_update, data_out
 
+    # Mevcut diğer kontroller...
     if button_id == 'start-button':
         if source not in nodes or target not in nodes:
-            return dash.no_update, "Kaynak veya hedef düğüm geçersiz.", dash.no_update, data_out
-        steps, path = dijkstra(nodes, edges, source, target)
-        current_step = -1
-        is_running = True
-        data_out['steps'] = steps
-        data_out['path'] = path
-        data_out['current_step'] = current_step
-        data_out['is_running'] = is_running
+            return dash.no_update, "Kaynak veya hedef değişken geçersiz.", dash.no_update, data_out
+        new_steps, new_path = run_sem_model(nodes, edges, source, target)
+        data_out['steps'] = new_steps
+        data_out['path'] = new_path
+        data_out['current_step'] = -1
+        data_out['is_running'] = True
         elems = generate_elements(nodes, edges, source, target)
-        return elems, "Algoritma başlatıldı. 'Adım ilerlet' ile devam edin.", f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
+        info_text = "SEM analizi başlatıldı. 'Adım ilerlet' ile devam edin."
+        return elems, info_text, f"Başlangıç değişkeni: {source}, Hedef değişkeni: {target}", data_out
 
     elif button_id == 'step-button':
         if not is_running:
-            return dash.no_update, "Algoritma çalışmıyor. Önce 'Başlat' ile başlatın.", dash.no_update, data_out
+            return dash.no_update, "Analiz çalışmıyor. Önce 'Başlat' ile başlatın.", dash.no_update, data_out
         if current_step < len(steps)-1:
             current_step += 1
             data_out['current_step'] = current_step
             step = steps[current_step]
             final_step = (current_step == len(steps)-1)
             elems = generate_elements(nodes, edges, source, target, step_info=step, path= path if final_step else [])
-            info_text = f"Adım: {current_step+1}/{len(steps)} - İşlenen düğüm: {step['current']}"
-            if final_step and path:
-                info_text += " - Yol bulundu: " + "->".join(path)
-                is_running = False
-                data_out['is_running'] = False
-            else:
-                info_text += " - 'Adım ilerlet' ile devam."
-            return elems, info_text, f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
+            info_text = format_step_info(current_step, steps, path, edges)
+            return elems, info_text, f"Başlangıç değişkeni: {source}, Hedef değişkeni: {target}", data_out
         else:
             return dash.no_update, "Tüm adımlar tamamlandı.", dash.no_update, data_out
 
@@ -376,9 +466,10 @@ def control_buttons(start_clicks, step_clicks, reset_clicks, tapNode, data, elem
         data_out['current_step'] = -1
         data_out['is_running'] = False
         elems = generate_elements(nodes, edges, source, target)
-        return elems, "Sıfırlandı. 'Başlat' ile yeniden başlayın.", f"Başlangıç düğümü: {source}, Hedef düğüm: {target}", data_out
+        return elems, "Sıfırlandı. 'Başlat' ile yeniden başlayın.", f"Başlangıç değişkeni: {source}, Hedef değişkeni: {target}", data_out
 
     return dash.no_update, dash.no_update, dash.no_update, data_out
+
 
 if __name__ == '__main__':
     app.run_server(debug=True)
